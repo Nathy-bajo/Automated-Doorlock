@@ -6,7 +6,7 @@
 .vscode/
 .cargo/
 /deploy.sh
-prisma/
+/src/prisma/
 /migrate.sh
 
 # testing
