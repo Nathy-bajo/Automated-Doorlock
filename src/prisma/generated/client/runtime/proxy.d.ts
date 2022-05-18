@@ -2,7 +2,7 @@
 
 import { inspect } from 'util';
 
-declare type Action = DMMF.ModelAction | 'executeRaw' | 'queryRaw';
+declare type Action = keyof typeof DMMF.ModelAction | 'executeRaw' | 'queryRaw' | 'runCommandRaw';
 
 declare class Arg {
     key: string;
@@ -65,9 +65,11 @@ declare interface BinaryTargetsEnvValue {
 }
 
 declare interface Client_2 {
+    /** Only via tx proxy */
+    [TX_ID]?: string;
     _dmmf: DMMFClass;
     _engine: Engine;
-    _fetcher: PrismaClientFetcher;
+    _fetcher: RequestHandler;
     _connectionPromise?: Promise<any>;
     _disconnectionPromise?: Promise<any>;
     _engineConfig: EngineConfig;
@@ -82,11 +84,36 @@ declare interface Client_2 {
     $queryRaw(query: TemplateStringsArray | sqlTemplateTag.Sql, ...values: any[]): any;
     __internal_triggerPanic(fatal: boolean): any;
     $transaction(input: any, options?: any): any;
+    _request(internalParams: InternalRequestParams): Promise<any>;
 }
 
-declare type ConnectorType = 'mysql' | 'mongodb' | 'sqlite' | 'postgresql' | 'sqlserver';
+declare type ConnectorType = 'mysql' | 'mongodb' | 'sqlite' | 'postgresql' | 'sqlserver' | 'jdbc:sqlserver' | 'cockroachdb';
 
-declare type ConnectorType_2 = 'mysql' | 'mongodb' | 'sqlite' | 'postgresql' | 'sqlserver' | 'jdbc:sqlserver';
+declare type ConnectorType_2 = 'mysql' | 'mongodb' | 'sqlite' | 'postgresql' | 'sqlserver' | 'jdbc:sqlserver' | 'cockroachdb';
+
+declare interface Context {
+    /**
+     * Get a value from the context.
+     *
+     * @param key key which identifies a context value
+     */
+    getValue(key: symbol): unknown;
+    /**
+     * Create a new context which inherits from this context and has
+     * the given key set to the given value.
+     *
+     * @param key context key for which to set the value
+     * @param value value to set for the given key
+     */
+    setValue(key: symbol, value: unknown): Context;
+    /**
+     * Return a new context which inherits from this context but does
+     * not contain a value for the given key.
+     *
+     * @param key context key for which to clear a value
+     */
+    deleteValue(key: symbol): Context;
+}
 
 declare class DataLoader<T = unknown> {
     private options;
@@ -108,8 +135,8 @@ declare type DataLoaderOptions<T> = {
 
 declare interface DataSource {
     name: string;
-    activeProvider: ConnectorType;
-    provider: ConnectorType;
+    activeProvider: ConnectorType_2;
+    provider: ConnectorType_2;
     url: EnvValue;
     config: {
         [key: string]: string;
@@ -442,6 +469,7 @@ export declare namespace DMMF {
     export interface Datamodel {
         models: Model[];
         enums: DatamodelEnum[];
+        types: Model[];
     }
     export interface uniqueIndex {
         name: string;
@@ -473,9 +501,13 @@ export declare namespace DMMF {
         isUnique: boolean;
         isId: boolean;
         isReadOnly: boolean;
-        isGenerated: boolean;
-        isUpdatedAt: boolean;
-        type: string | DMMF.SchemaEnum | DMMF.OutputType | DMMF.SchemaArg;
+        isGenerated?: boolean;
+        isUpdatedAt?: boolean;
+        /**
+         * Describes the data type in the same the way is is defined in the Prisma schema:
+         * BigInt, Boolean, Bytes, DateTime, Decimal, Float, Int, JSON, String, $ModelName
+         */
+        type: string;
         dbNames?: string[] | null;
         hasDefaultValue: boolean;
         default?: FieldDefault | string | boolean | number;
@@ -579,6 +611,8 @@ export declare namespace DMMF {
         aggregate?: string | null;
         groupBy?: string | null;
         count?: string | null;
+        findRaw?: string | null;
+        aggregateRaw?: string | null;
     }
     export enum ModelAction {
         findUnique = "findUnique",
@@ -593,7 +627,9 @@ export declare namespace DMMF {
         deleteMany = "deleteMany",
         groupBy = "groupBy",
         count = "count",
-        aggregate = "aggregate"
+        aggregate = "aggregate",
+        findRaw = "findRaw",
+        aggregateRaw = "aggregateRaw"
     }
 }
 
@@ -616,6 +652,8 @@ export declare class DMMFClass implements DMMF.Document {
     enumMap: Dictionary<DMMF.SchemaEnum>;
     datamodelEnumMap: Dictionary<DMMF.DatamodelEnum>;
     modelMap: Dictionary<DMMF.Model>;
+    typeMap: Dictionary<DMMF.Model>;
+    typeAndModelMap: Dictionary<DMMF.Model>;
     mappingsMap: Dictionary<DMMF.ModelMapping>;
     rootFieldMap: Dictionary<DMMF.SchemaField>;
     constructor({ datamodel, schema, mappings }: DMMF.Document);
@@ -633,6 +671,8 @@ export declare class DMMFClass implements DMMF.Document {
     protected getDatamodelEnumMap(): Dictionary<DMMF.DatamodelEnum>;
     protected getEnumMap(): Dictionary<DMMF.SchemaEnum>;
     protected getModelMap(): Dictionary<DMMF.Model>;
+    protected getTypeMap(): Dictionary<DMMF.Model>;
+    protected getTypeModelMap(): Dictionary<DMMF.Model>;
     protected getMergedOutputTypeMap(): Dictionary<DMMF.OutputType>;
     protected getInputTypeMap(): Dictionary<DMMF.InputType>;
     protected getMappingsMap(): Dictionary<DMMF.ModelMapping>;
@@ -710,7 +750,6 @@ declare interface EngineConfig {
     logLevel?: 'info' | 'warn';
     env?: Record<string, string>;
     flags?: string[];
-    useUds?: boolean;
     clientVersion?: string;
     previewFeatures?: string[];
     engineEndpoint?: string;
@@ -897,11 +936,28 @@ declare type InstanceRejectOnNotFound = RejectOnNotFound | Record<string, Reject
 
 declare interface InternalDatasource {
     name: string;
-    activeProvider: ConnectorType_2;
-    provider: ConnectorType_2;
+    activeProvider: ConnectorType;
+    provider: ConnectorType;
     url: EnvValue_2;
     config: any;
 }
+
+declare type InternalRequestParams = {
+    /**
+     * The original client method being called.
+     * Even though the rootField / operation can be changed,
+     * this method stays as it is, as it's what the user's
+     * code looks like
+     */
+    clientMethod: string;
+    callsite?: string;
+    /** Headers metadata that will be passed to the Engine */
+    headers?: Record<string, string>;
+    transactionId?: string | number;
+    unpacker?: Unpacker;
+    otelCtx?: Context;
+    lock?: PromiseLike<void>;
+} & QueryMiddlewareParams;
 
 declare type InvalidArgError = InvalidArgNameError | MissingArgError | InvalidArgTypeError | AtLeastOneError | AtMostOneError | InvalidNullArgError;
 
@@ -1025,23 +1081,6 @@ declare type Options = {
     timeout?: number;
 };
 
-declare class PrismaClientFetcher {
-    prisma: any;
-    debug: boolean;
-    hooks: any;
-    dataloader: DataLoader<{
-        document: Document;
-        runInTransaction?: boolean;
-        transactionId?: number;
-        headers?: Record<string, string>;
-    }>;
-    constructor(prisma: any, enableDebug?: boolean, hooks?: any);
-    get [Symbol.toStringTag](): string;
-    request({ document, dataPath, rootField, typeName, isList, callsite, rejectOnNotFound, clientMethod, runInTransaction, showColors, engineHook, args, headers, transactionId, unpacker, }: RequestParams): Promise<any>;
-    sanitizeMessage(message: any): any;
-    unpack(document: any, data: any, path: any, rootField: any, unpacker?: Unpacker): any;
-}
-
 export declare class PrismaClientInitializationError extends Error {
     clientVersion: string;
     errorCode?: string;
@@ -1093,7 +1132,6 @@ export declare interface PrismaClientOptions {
     __internal?: {
         debug?: boolean;
         hooks?: Hooks;
-        useUds?: boolean;
         engine?: {
             cwd?: string;
             binaryPath?: string;
@@ -1154,6 +1192,24 @@ export declare type RawValue = Value | Sql;
 
 declare type RejectOnNotFound = boolean | ((error: Error) => Error) | undefined;
 
+declare type Request_2 = {
+    document: Document;
+    runInTransaction?: boolean;
+    transactionId?: string | number;
+    headers?: Record<string, string>;
+};
+
+declare class RequestHandler {
+    client: Client_2;
+    hooks: any;
+    dataloader: DataLoader<Request_2>;
+    constructor(client: Client_2, hooks?: any);
+    request({ document, dataPath, rootField, typeName, isList, callsite, rejectOnNotFound, clientMethod, runInTransaction, showColors, engineHook, args, headers, transactionId, unpacker, }: RequestParams): Promise<any>;
+    sanitizeMessage(message: any): any;
+    unpack(document: any, data: any, path: any, rootField: any, unpacker?: Unpacker): any;
+    get [Symbol.toStringTag](): string;
+}
+
 declare type RequestParams = {
     document: Document;
     dataPath: string[];
@@ -1168,7 +1224,7 @@ declare type RequestParams = {
     engineHook?: EngineMiddleware;
     args: any;
     headers?: Record<string, string>;
-    transactionId?: number;
+    transactionId?: string | number;
     unpacker?: Unpacker;
 };
 
@@ -1214,6 +1270,8 @@ declare namespace Transaction {
 }
 
 export declare function transformDocument(document: Document): Document;
+
+declare const TX_ID: unique symbol;
 
 /**
  * Unpacks the result of a data object and maps DateTime fields to instances of `Date` inplace

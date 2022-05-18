@@ -116,33 +116,33 @@ async fn main() -> Result<()> {
             .prisma
             .transaction()
             .create_user::<User>(UserCreateInput {
-                email: "seunlanlege@gmail.com".to_string(),
+                email: "example@gmail.com".to_string(),
                 name: "seun".to_string(),
-                password: state.hasher.hash("*******")?,
+                password: state.hasher.hash("password@123")?,
                 role: "admin".to_string(),
             })?
             .create_user::<User>(UserCreateInput {
-                email: "bajon7680@gmail.com".to_string(),
+                email: "example@gmail.com".to_string(),
                 name: "nathaniel".to_string(),
-                password: state.hasher.hash("*******")?,
+                password: state.hasher.hash("password@123")?,
                 role: "admin".to_string(),
             })?
             .create_user::<User>(UserCreateInput {
-                email: "oluwashinabajo@gmail.com".to_string(),
+                email: "example@gmail.com".to_string(),
                 name: "ayomide".to_string(),
-                password: state.hasher.hash("*******")?,
+                password: state.hasher.hash("password@123")?,
                 role: "admin".to_string(),
             })?
             .create_user::<User>(UserCreateInput {
-                email: "jummyfola013@gmail.com".to_string(),
+                email: "example013@gmail.com".to_string(),
                 name: "mum".to_string(),
-                password: state.hasher.hash("********")?,
+                password: state.hasher.hash("password@123")?,
                 role: "admin".to_string(),
             })?
             .create_user::<User>(UserCreateInput {
-                email: "debbiebajo@gmail.com".to_string(),
+                email: "example@gmail.com".to_string(),
                 name: "damilola".to_string(),
-                password: state.hasher.hash("********")?,
+                password: state.hasher.hash("password@123")?,
                 role: "admin".to_string(),
             })?
             .execute::<TransactionResponse>()
@@ -378,8 +378,8 @@ async fn forgot_handler(mut req: Request<Arc<State>>) -> tide::Result {
     .map_err(|e| tide::http::Error::from(e))?;
     println!("This is my token={}", token);
 
-    let domain = "*********";
-    let key = "********";
+    let domain = "sandbox3234fec2e6144717bf98ddfca5eb0b81.mailgun.org";
+    let key = "02c914953aae6aef71afd139f07d4a06-02fa25a3-25b8c2b9";
     let recipient = user.email;
     let recipient = EmailAddress::address(&recipient);
     let message = Message {
@@ -398,7 +398,7 @@ async fn forgot_handler(mut req: Request<Arc<State>>) -> tide::Result {
     };
     let sender = EmailAddress::name_address(
         "Click to change your password",
-        "***********",
+        "postmaster@sandbox3234fec2e6144717bf98ddfca5eb0b81.mailgun.org",
     );
 
     match client.send(&sender) {
