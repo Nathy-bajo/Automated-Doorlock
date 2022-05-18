@@ -378,8 +378,8 @@ async fn forgot_handler(mut req: Request<Arc<State>>) -> tide::Result {
     .map_err(|e| tide::http::Error::from(e))?;
     println!("This is my token={}", token);
 
-    let domain = "sandbox3234fec2e6144717bf98ddfca5eb0b81.mailgun.org";
-    let key = "02c914953aae6aef71afd139f07d4a06-02fa25a3-25b8c2b9";
+    let domain = "*******";
+    let key = "******";
     let recipient = user.email;
     let recipient = EmailAddress::address(&recipient);
     let message = Message {
@@ -398,7 +398,7 @@ async fn forgot_handler(mut req: Request<Arc<State>>) -> tide::Result {
     };
     let sender = EmailAddress::name_address(
         "Click to change your password",
-        "postmaster@sandbox3234fec2e6144717bf98ddfca5eb0b81.mailgun.org",
+        "*********",
     );
 
     match client.send(&sender) {
