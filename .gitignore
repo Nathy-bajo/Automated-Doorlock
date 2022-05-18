@@ -4,9 +4,9 @@
 /Cargo.lock
 /target
 .vscode/
-.cargo/
+/cargo
 /deploy.sh
-/src/prisma/
+**prisma/
 /migrate.sh
 
 # testing

@@ -1,8 +1,0 @@
-paths = [
-    "../prisma-engines"
-]
-[source.crates-io]
-registry = "https://github.com/rust-lang/crates.io-index"
-
-[target.armv7-unknown-linux-gnueabihf]
-linker = "arm-linux-gnueabihf-gcc"
