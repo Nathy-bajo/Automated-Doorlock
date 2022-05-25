@@ -62,7 +62,7 @@ type Result<T> = std::result::Result<T, error::Error>;
 
 pub struct State {
     pub prisma: Prisma,
-    // pub servo: Option<Servo>,
+    // pub servo: Mutex<Servo>,
     pub hasher: Hasher,
 }
 
@@ -94,7 +94,7 @@ async fn main() -> Result<()> {
     let hasher = Hasher::new();
     let state = State {
         prisma,
-        // servo: None,
+        // servo: Mutex::new(Servo::new(17)),
         hasher,
     };
 
@@ -118,31 +118,31 @@ async fn main() -> Result<()> {
             .create_user::<User>(UserCreateInput {
                 email: "example@gmail.com".to_string(),
                 name: "seun".to_string(),
-                password: state.hasher.hash("password@123")?,
+                password: state.hasher.hash("Password@123")?,
                 role: "admin".to_string(),
             })?
             .create_user::<User>(UserCreateInput {
-                email: "example@gmail.com".to_string(),
+                email: "bajon7680@gmail.com".to_string(),
                 name: "nathaniel".to_string(),
-                password: state.hasher.hash("password@123")?,
+                password: state.hasher.hash("Password@123")?,
                 role: "admin".to_string(),
             })?
             .create_user::<User>(UserCreateInput {
-                email: "example@gmail.com".to_string(),
+                email: "oluwashinabajo@gmail.com".to_string(),
                 name: "ayomide".to_string(),
-                password: state.hasher.hash("password@123")?,
+                password: state.hasher.hash("Password@123")?,
                 role: "admin".to_string(),
             })?
             .create_user::<User>(UserCreateInput {
-                email: "example013@gmail.com".to_string(),
+                email: "jummyfola013@gmail.com".to_string(),
                 name: "mum".to_string(),
-                password: state.hasher.hash("password@123")?,
+                password: state.hasher.hash("Password@123")?,
                 role: "admin".to_string(),
             })?
             .create_user::<User>(UserCreateInput {
-                email: "example@gmail.com".to_string(),
+                email: "debbiebajo@gmail.com".to_string(),
                 name: "damilola".to_string(),
-                password: state.hasher.hash("password@123")?,
+                password: state.hasher.hash("Password@123")?,
                 role: "admin".to_string(),
             })?
             .execute::<TransactionResponse>()
@@ -232,7 +232,7 @@ pub async fn reset_handler(mut req: Request<Arc<State>>) -> tide::Result {
     println!("Testing");
     // check token validity
 
-    // fecth user with id from token
+    // fetch user with id from token
     let user = req
         .state()
         .prisma
@@ -335,19 +335,19 @@ pub async fn admin_handler(mut req: Request<Arc<State>>) -> tide::Result {
 
     // put this in state
     // let servo = &req.state().servo;
-    {
-        // if let Ok(mut servo) = servo.lock() {
-        //     match Action::from_str(&action) {
-        //         Action::Open => {
-        //             servo.min();
-        //         }
-        //         Action::Close => {
-        //             servo.max();
-        //         }
-        //         Action::Default => {}
-        //     }
-        // };
-    };
+    // {
+    //     if let Ok(mut servo) = servo.lock() {
+    //         match Action::from_str(&action) {
+    //             Action::Open => {
+    //                 servo.min();
+    //             }
+    //             Action::Close => {
+    //                 servo.max();
+    //             }
+    //             Action::Default => {}
+    //         }
+    //     };
+    // };
 
     Ok(format!("Action executed").into())
 }
@@ -378,8 +378,8 @@ async fn forgot_handler(mut req: Request<Arc<State>>) -> tide::Result {
     .map_err(|e| tide::http::Error::from(e))?;
     println!("This is my token={}", token);
 
-    let domain = "*******";
-    let key = "******";
+    let domain = "sandbox3234fec2e6144717bf98ddfca5eb0b81.mailgun.org";
+    let key = "02c914953aae6aef71afd139f07d4a06-02fa25a3-25b8c2b9";
     let recipient = user.email;
     let recipient = EmailAddress::address(&recipient);
     let message = Message {
@@ -398,7 +398,7 @@ async fn forgot_handler(mut req: Request<Arc<State>>) -> tide::Result {
     };
     let sender = EmailAddress::name_address(
         "Click to change your password",
-        "*********",
+        "postmaster@sandbox3234fec2e6144717bf98ddfca5eb0b81.mailgun.org",
     );
 
     match client.send(&sender) {
