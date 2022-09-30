@@ -1,45 +1,71 @@
-use crate::auth::{Claims, Role, JWT_SECRET};
 extern crate mailgun_rs;
-use crate::error::Error;
-use auth::create_jwt;
-use mailgun_rs::{EmailAddress, Mailgun, Message};
-// use chrono::{offset, DateTime, NaiveDateTime, TimeZone, Utc};
-use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
-use prisma_client::{
-    FindFirstUserArgs, Prisma, UpdateOneUserArgs, User, UserCreateInput, UserUpdateInput,
-    UserWhereInput, UserWhereInputEmail, UserWhereUniqueInput,
+
+use crate::helpers::{polling, toggle_door_state, 
+    // index
 };
-// use rust_gpiozero::Servo;
+// use crate::videoroom::{RoomsRegistry, WorkerManager};
+use prisma::{
+    Door, DoorCreateInput, DoorWhereInput, DoorWhereInputId, FindFirstDoorArgs, FindFirstUserArgs,
+    Prisma, User, UserCreateInput, UserWhereInput, UserWhereInputEmail,
+};
+use prisma_client::futures::lock::Mutex;
+use rust_gpiozero::{
+    // Button,
+    //  Debounce, 
+     Servo};
 use serde::{Deserialize, Serialize};
-use std::convert::TryInto;
 use std::sync::Arc;
-// use std::sync::Mutex;
 use tide::security::{CorsMiddleware, Origin};
-use tide::{utils::After, Body, Error as TideError, Request, Response, StatusCode};
+use tide::{utils::After, Response, StatusCode};
+use tide::{Body, Request};
+use tide_websockets::{Message, WebSocket, WebSocketConnection};
 use utils::Hasher;
+use futures::StreamExt;
 
 mod auth;
+pub mod controllers;
 mod error;
+pub mod helpers;
+mod prisma;
 mod utils;
+use controllers::*;
+mod videoroom;
+
+// 
+
+#[derive(Deserialize, Serialize)]
+pub struct ClaimsToken {
+    pub kid: String,
+    pub iss: String,
+    pub iat: u64,
+}
 
 #[derive(serde::Deserialize)]
 pub struct DataLoss {
     pub email: String,
 }
 
-#[derive(serde::Deserialize)]
-pub struct ResetPassword {
-    email: String,
-    reset_password: String,
-    // confirm_password: String,
+#[derive(Deserialize, Serialize)]
+pub struct Polling {
+    pub door: String,
 }
 
-#[derive(serde::Deserialize)]
+#[derive(Deserialize, Serialize)]
+pub struct ResetPassword {
+    pub email: String,
+    pub reset_password: String,
+}
+
+#[derive(Deserialize, Serialize)]
+pub struct Name {
+    pub name: String,
+}
+
+#[derive(Deserialize, Serialize)]
 pub struct FormData {
     pub email: String,
     pub current_password: String,
     pub new_password: String,
-    // new_password_check: Secret<String>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -58,53 +84,136 @@ pub struct LoginResponse {
     pub token: String,
 }
 
-type Result<T> = std::result::Result<T, error::Error>;
-
-pub struct State {
-    pub prisma: Prisma,
-    // pub servo: Mutex<Servo>,
-    pub hasher: Hasher,
+#[derive(Serialize, Deserialize)]
+pub struct AppleNotifications {
+    pub device_token: String,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
-pub enum Action {
+#[derive(Serialize, Deserialize)]
+pub struct NotificationMessage {
+    pub aps: Alert,
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct Alert {
+    pub alert: String,
+}
+
+pub type Result<T> = std::result::Result<T, error::Error>;
+
+pub struct TideState {
+    pub prisma: Prisma,
+    pub servo: Arc<Mutex<Servo>>,
+    // pub button: Arc<Mutex<Button>>,
+    pub hasher: Hasher,
+    // room_registry: Arc<RoomsRegistry>,
+    // worker_manager: Arc<WorkerManager>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub enum DoorState {
     Open,
     Close,
-    Default,
 }
 
-impl Action {
-    pub fn from_str(action: &str) -> Action {
-        match action {
-            "close" => Action::Open,
-            "open" => Action::Close,
-            _ => Action::Default,
-        }
+impl core::fmt::Display for DoorState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let state = match self {
+            DoorState::Open => "open",
+            DoorState::Close => "close",
+        };
+        write!(f, "{}", state)
+    }
+}
+
+impl DoorState {
+    pub fn from_str(action: &str) -> std::result::Result<DoorState, ()> {
+        let state = match action.to_lowercase().as_str() {
+            "open" => DoorState::Open,
+            "close" => DoorState::Close,
+            _ => Err(())?,
+        };
+        Ok(state)
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub enum ButtonPress {
+    Pressed,
+}
+
+#[derive(Deserialize, Serialize)]
+pub struct ButtonPressed {
+    pub button: String,
+}
+
+impl ButtonPress {
+    pub fn from_str(button: &str) -> std::result::Result<ButtonPress, ()> {
+        let state = match button.to_lowercase().as_str() {
+            "pushed" => ButtonPress::Pressed,
+            _ => Err(())?
+        };
+        Ok(state)
     }
 }
 
 #[derive(Clone, Serialize, Deserialize)]
-struct TransactionResponse {
-    create_user: User,
+pub struct TransactionResponse {
+    pub create_user: User,
 }
 
-#[async_std::main]
+#[derive(Clone, Serialize, Deserialize)]
+pub struct DoorResponse {
+    pub create_door: Door,
+}
+
+#[tokio::main]
 async fn main() -> Result<()> {
+    env_logger::init();
     let prisma = Prisma::new(vec![]).await?;
     let hasher = Hasher::new();
-    let state = State {
+    let state = TideState {
         prisma,
-        // servo: Mutex::new(Servo::new(17)),
+        servo: Arc::new(Mutex::new(Servo::new(17))),
         hasher,
+        // button: Arc::new(Mutex::new(
+        //     Button::new(26).debounce(std::time::Duration::from_millis(100)),
+        // )),
+        // room_registry: Arc::new(RoomsRegistry::default()),
+        // worker_manager: Arc::new(WorkerManager::new()),
     };
 
+    // let button_pressed = state.button.lock().await;
+    // let mut button = button_pressed.wait_for_press(some(3));
     // create users
+
+    let door_exist = state
+        .prisma
+        .first_door::<Door>(FindFirstDoorArgs {
+            filter: Some(DoorWhereInput {
+                id: Some(DoorWhereInputId::Int(1)),
+                ..Default::default()
+            }),
+            ..Default::default()
+        })
+        .await?;
+    if door_exist.is_none() {
+        state
+            .prisma
+            .transaction()
+            .create_door::<Door>(DoorCreateInput {
+                state: DoorState::Open.to_string(),
+            })?
+            .execute::<DoorResponse>()
+            .await?;
+    }
+
     let users_exist = state
         .prisma
         .first_user::<User>(FindFirstUserArgs {
             filter: Some(UserWhereInput {
                 email: Some(UserWhereInputEmail::String(
-                    "example@gmail.com".to_string(),
+                    "seunlanlege@gmail.com".to_string(),
                 )),
                 ..Default::default()
             }),
@@ -116,34 +225,39 @@ async fn main() -> Result<()> {
             .prisma
             .transaction()
             .create_user::<User>(UserCreateInput {
-                email: "example@gmail.com".to_string(),
+                email: "seunlanlege@gmail.com".to_string(),
                 name: "seun".to_string(),
                 password: state.hasher.hash("Password@123")?,
                 role: "admin".to_string(),
+                device_token: None,
             })?
             .create_user::<User>(UserCreateInput {
                 email: "example@gmail.com".to_string(),
                 name: "nathaniel".to_string(),
                 password: state.hasher.hash("Password@123")?,
                 role: "admin".to_string(),
+                device_token: None,
             })?
             .create_user::<User>(UserCreateInput {
-                email: "example@gmail.com".to_string(),
+                email: "oluwashinabajo@gmail.com".to_string(),
                 name: "ayomide".to_string(),
                 password: state.hasher.hash("Password@123")?,
                 role: "admin".to_string(),
+                device_token: None,
             })?
             .create_user::<User>(UserCreateInput {
-                email: "example@gmail.com".to_string(),
+                email: "jummyfola013@gmail.com".to_string(),
                 name: "mum".to_string(),
                 password: state.hasher.hash("Password@123")?,
                 role: "admin".to_string(),
+                device_token: None,
             })?
             .create_user::<User>(UserCreateInput {
-                email: "example@gmail.com".to_string(),
+                email: "debbiebajo@gmail.com".to_string(),
                 name: "damilola".to_string(),
                 password: state.hasher.hash("Password@123")?,
                 role: "admin".to_string(),
+                device_token: None,
             })?
             .execute::<TransactionResponse>()
             .await?;
@@ -163,7 +277,7 @@ async fn main() -> Result<()> {
     app.with(cors);
 
     app.with(After(|mut res: Response| async {
-        if let Some(err) = res.downcast_error::<async_std::io::Error>() {
+        if let Some(err) = res.downcast_error::<tokio::io::Error>() {
             let msg = format!("Error: {:?}", err);
             res.set_status(StatusCode::NotFound);
             res.set_body(msg);
@@ -173,294 +287,25 @@ async fn main() -> Result<()> {
 
     app.at("/login").post(login_handler);
     app.at("/reset").post(reset_handler);
-    app.at("/door").post(admin_handler);
+    app.at("/door").post(toggle_door_state);
     app.at("/forgot").post(forgot_handler);
     app.at("/email").post(email_handler);
+    app.at("/polling").get(polling);
+    app.at("/notification").post(applenotification_handler);
+    // app.at("/video")
+    //     .with(WebSocket::new(
+    //         |req: Request<Arc<TideState>>, wsc: WebSocketConnection| async move {
+    //             println!("Web socketss {:?}", wsc);
+    //             let _ = index(req, wsc).await;
+    //             // let _ = ws_index(req, wsc).await;
+    //             Ok(())
+    //         },
+    //     ))
+    //     .get(|_| async { Ok(Body::empty()) });
 
     println!(r#"Server is running..."#);
 
     app.listen("0.0.0.0:8080").await?;
 
     Ok(())
-}
-
-pub async fn login_handler(mut req: Request<Arc<State>>) -> tide::Result {
-    let login_request = req.body_json::<LoginRequest>().await?;
-
-    let password = login_request.pw; // bcrypt
-    let user = req
-        .state()
-        .prisma
-        .first_user::<User>(FindFirstUserArgs {
-            filter: Some(UserWhereInput {
-                email: Some(UserWhereInputEmail::String(login_request.email)),
-                ..Default::default()
-            }),
-            ..Default::default()
-        })
-        .await
-        .map_err(|_e| TideError::from_str(StatusCode::NotFound, "User not found"))?
-        .ok_or_else(|| Error::JWTTokenError)?; //tide error
-    println!("{}", user.password);
-    let matches = req
-        .state()
-        .hasher
-        .verify(&password, &user.password)
-        .map_err(|e| TideError::from_str(500, format!("Failed to verify password: {}", e)))?;
-
-    if !matches {
-        return Err(TideError::from_str(
-            StatusCode::BadRequest,
-            "email or password not correct",
-        ));
-    }
-
-    let token = create_jwt(
-        user.id.try_into().unwrap(),
-        &Role::from_str(&user.role),
-        user.email,
-    )
-    .map_err(|e| tide::http::Error::from(e))?;
-
-    let mut res = tide::Response::new(StatusCode::Accepted);
-    res.set_body(Body::from_json(&LoginResponse { token }).unwrap());
-    Ok(res)
-}
-
-pub async fn reset_handler(mut req: Request<Arc<State>>) -> tide::Result {
-    let change_password = req.body_json::<FormData>().await?;
-    println!("Testing");
-    // check token validity
-
-    // fetch user with id from token
-    let user = req
-        .state()
-        .prisma
-        .first_user::<User>(FindFirstUserArgs {
-            filter: Some(UserWhereInput {
-                email: Some(UserWhereInputEmail::String(change_password.email)),
-                ..Default::default()
-            }),
-            ..Default::default()
-        })
-        .await
-        .map_err(|_e| TideError::from_str(StatusCode::NotFound, "User not found"))?
-        .ok_or_else(|| Error::JWTTokenError)?; //tide error
-    println!("Works");
-    // hash the old password in FormData, compare with the user password from db
-    let matches = req
-        .state()
-        .hasher
-        .verify(&change_password.current_password, &user.password)
-        .map_err(|e| TideError::from_str(300, format!("Failed to verify password: {}", e)))?;
-    println!("Still works");
-
-    if !matches {
-        return Err(TideError::from_str(
-            StatusCode::BadRequest,
-            "email or password not correct",
-        ));
-    }
-
-    // take the hash of new password and update user in db
-    println!("still working");
-    req.state()
-        .prisma
-        .update_user::<User>(UpdateOneUserArgs {
-            data: UserUpdateInput {
-                password: Some(prisma_client::UserUpdateInputPassword::String(
-                    req.state()
-                        .hasher
-                        .hash(&change_password.new_password)
-                        .map_err(|e| {
-                            TideError::from_str(300, format!("Failed to hash password: {}", e))
-                        })?,
-                )),
-                ..Default::default()
-            },
-            // filter: Default::default()
-            filter: UserWhereUniqueInput {
-                email: Some(user.email),
-                ..Default::default()
-            },
-        })
-        .await
-        .map_err(|e| TideError::from_str(400, format!("Password invalid: {}", e)))?;
-    println!("well");
-
-    Ok(format!("Hello User ",).into())
-}
-
-pub async fn admin_handler(mut req: Request<Arc<State>>) -> tide::Result {
-    // check auth
-
-    let token = req
-        .header("Authorization")
-        .map(|token| token.as_str().to_string());
-
-    let token = token.map(|token| token.split("Bearer: ").collect::<Vec<_>>()[1].to_string());
-
-    let (action, email) = match token {
-        Some(jwt) => {
-            let decoded = decode::<Claims>(
-                &jwt,
-                &DecodingKey::from_secret(JWT_SECRET),
-                &Validation::new(Algorithm::HS512),
-            )
-            .map_err(|_e| {
-                tide::http::Error::from_str(
-                    StatusCode::BadRequest,
-                    Error::JWTTokenError.to_string(),
-                )
-            })?;
-            if decoded.claims.role != Role::Admin {
-                return Err(tide::http::Error::from_str(
-                    StatusCode::BadRequest,
-                    Error::NoPermissionError.to_string(),
-                ));
-            } else {
-                let request = req.body_json::<AdminRequest>().await?;
-                (request.action, decoded.claims.email)
-            }
-        }
-        None => {
-            return Err(tide::http::Error::from_str(
-                StatusCode::BadRequest,
-                "Server error",
-            ))
-        }
-    };
-    let log = format!("{},{},{}", email, chrono::Utc::now(), action);
-    let _ = std::fs::write("log.txt", log.as_bytes());
-
-    // put this in state
-    // let servo = &req.state().servo;
-    // {
-    //     if let Ok(mut servo) = servo.lock() {
-    //         match Action::from_str(&action) {
-    //             Action::Open => {
-    //                 servo.min();
-    //             }
-    //             Action::Close => {
-    //                 servo.max();
-    //             }
-    //             Action::Default => {}
-    //         }
-    //     };
-    // };
-
-    Ok(format!("Action executed").into())
-}
-
-async fn forgot_handler(mut req: Request<Arc<State>>) -> tide::Result {
-    let forgot_password = req.body_json::<DataLoss>().await?;
-    let user = req
-        .state()
-        .prisma
-        .first_user::<User>(FindFirstUserArgs {
-            filter: Some(UserWhereInput {
-                email: Some(UserWhereInputEmail::String(forgot_password.email)),
-                ..Default::default()
-            }),
-            ..Default::default()
-        })
-        .await
-        .ok()
-        .flatten()
-        .ok_or(TideError::from_str(StatusCode::NotFound, "User not found"))?; //tide error
-    println!("Workss");
-
-    let token = create_jwt(
-        user.id as usize,
-        &Role::from_str(&user.role.clone()),
-        user.email.clone(),
-    )
-    .map_err(|e| tide::http::Error::from(e))?;
-    println!("This is my token={}", token);
-
-    let domain = "************";
-    let key = "**************";
-    let recipient = user.email;
-    let recipient = EmailAddress::address(&recipient);
-    let message = Message {
-        to: vec![recipient],
-        subject: String::from("Change your password here"),
-        text: String::from("Are you ready to change your password"),
-        html: format!("<p><a href=\"http://192.168.100.204:3000/email?token={}\">click to reset password</a></p>", token),
-        ..Default::default()
-    };
-    println!("yupp still workss");
-
-    let client = Mailgun {
-        api_key: String::from(key),
-        domain: String::from(domain),
-        message,
-    };
-    let sender = EmailAddress::name_address(
-        "Click to change your password",
-        "*****************",
-    );
-
-    match client.send(&sender) {
-        Ok(_) => {
-            println!("successful");
-        }
-        Err(err) => {
-            println!("{}", err);
-        }
-    }
-
-    println!("Hehehe");
-
-    let mut res = tide::Response::new(StatusCode::Accepted);
-    res.set_body(Body::from_json(&LoginResponse { token }).unwrap());
-    Ok(res)
-
-    // Ok(format!("Hello User ",).into())
-}
-
-async fn email_handler(mut req: Request<Arc<State>>) -> tide::Result {
-    let update_password = req.body_json::<ResetPassword>().await?;
-    println!("Sasageyo!");
-
-    let user = req
-        .state()
-        .prisma
-        .first_user::<User>(FindFirstUserArgs {
-            filter: Some(UserWhereInput {
-                email: Some(UserWhereInputEmail::String(update_password.email)),
-                ..Default::default()
-            }),
-            ..Default::default()
-        })
-        .await
-        .map_err(|_e| TideError::from_str(StatusCode::NotFound, "User not found"))?
-        .ok_or_else(|| Error::JWTTokenError)?; //tide error
-    println!("Sassyy");
-
-    req.state()
-        .prisma
-        .update_user::<User>(UpdateOneUserArgs {
-            data: UserUpdateInput {
-                password: Some(prisma_client::UserUpdateInputPassword::String(
-                    req.state()
-                        .hasher
-                        .hash(&update_password.reset_password)
-                        .map_err(|e| {
-                            TideError::from_str(300, format!("Failed to hash password: {}", e))
-                        })?,
-                )),
-                ..Default::default()
-            },
-            // filter: Default::default()
-            filter: UserWhereUniqueInput {
-                email: Some(user.email),
-                ..Default::default()
-            },
-        })
-        .await
-        .map_err(|e| TideError::from_str(400, format!("Password invalid: {}", e)))?;
-    println!("Partss");
-
-    Ok(format!("Hello User ",).into())
 }

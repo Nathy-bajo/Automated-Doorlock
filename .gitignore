@@ -20,8 +20,12 @@
 .env.development.local
 .env.test.local
 .env.production.local
+AuthKey_6DRGKC394S.p8
 
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
+# Meson.
+/worker/subprojects/*
+!/worker/subprojects/*.wrap

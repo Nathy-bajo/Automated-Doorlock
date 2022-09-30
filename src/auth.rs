@@ -55,7 +55,7 @@ fn jwt_from_header(headers: Headers) -> Result<String> {
 
 pub fn create_jwt(uid: usize, role: &Role, email: String) -> Result<String> {
     let expiration = Utc::now()
-        .checked_add_signed(chrono::Duration::minutes(30))
+        .checked_add_signed(chrono::Duration::weeks(12))
         .expect("valid timestamp")
         .timestamp();
 
