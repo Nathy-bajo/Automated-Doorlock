@@ -23,7 +23,6 @@ pub mod helpers;
 mod prisma;
 mod utils;
 use controllers::*;
-mod videoroom;
 
 #[derive(Deserialize, Serialize)]
 pub struct ClaimsToken {
