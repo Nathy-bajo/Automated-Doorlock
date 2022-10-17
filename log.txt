@@ -1,1 +1,1 @@
-example@gmail.com,2022-09-29 15:58:45.312902 UTC,close
+example@gmail.com,2022-10-14 14:09:16.448095 UTC,open

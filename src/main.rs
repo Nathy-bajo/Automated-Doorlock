@@ -1,18 +1,13 @@
 extern crate mailgun_rs;
 
-use crate::helpers::{polling, toggle_door_state, 
-    // index
-};
-// use crate::videoroom::{RoomsRegistry, WorkerManager};
+use crate::helpers::{polling, toggle_door_state};
+use futures::StreamExt;
 use prisma::{
     Door, DoorCreateInput, DoorWhereInput, DoorWhereInputId, FindFirstDoorArgs, FindFirstUserArgs,
     Prisma, User, UserCreateInput, UserWhereInput, UserWhereInputEmail,
 };
 use prisma_client::futures::lock::Mutex;
-use rust_gpiozero::{
-    // Button,
-    //  Debounce, 
-     Servo};
+use rust_gpiozero::Servo;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tide::security::{CorsMiddleware, Origin};
@@ -20,7 +15,6 @@ use tide::{utils::After, Response, StatusCode};
 use tide::{Body, Request};
 use tide_websockets::{Message, WebSocket, WebSocketConnection};
 use utils::Hasher;
-use futures::StreamExt;
 
 mod auth;
 pub mod controllers;
@@ -30,8 +24,6 @@ mod prisma;
 mod utils;
 use controllers::*;
 mod videoroom;
-
-// 
 
 #[derive(Deserialize, Serialize)]
 pub struct ClaimsToken {
@@ -106,8 +98,6 @@ pub struct TideState {
     pub servo: Arc<Mutex<Servo>>,
     // pub button: Arc<Mutex<Button>>,
     pub hasher: Hasher,
-    // room_registry: Arc<RoomsRegistry>,
-    // worker_manager: Arc<WorkerManager>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -151,7 +141,7 @@ impl ButtonPress {
     pub fn from_str(button: &str) -> std::result::Result<ButtonPress, ()> {
         let state = match button.to_lowercase().as_str() {
             "pushed" => ButtonPress::Pressed,
-            _ => Err(())?
+            _ => Err(())?,
         };
         Ok(state)
     }
@@ -179,8 +169,6 @@ async fn main() -> Result<()> {
         // button: Arc::new(Mutex::new(
         //     Button::new(26).debounce(std::time::Duration::from_millis(100)),
         // )),
-        // room_registry: Arc::new(RoomsRegistry::default()),
-        // worker_manager: Arc::new(WorkerManager::new()),
     };
 
     // let button_pressed = state.button.lock().await;
@@ -292,16 +280,6 @@ async fn main() -> Result<()> {
     app.at("/email").post(email_handler);
     app.at("/polling").get(polling);
     app.at("/notification").post(applenotification_handler);
-    // app.at("/video")
-    //     .with(WebSocket::new(
-    //         |req: Request<Arc<TideState>>, wsc: WebSocketConnection| async move {
-    //             println!("Web socketss {:?}", wsc);
-    //             let _ = index(req, wsc).await;
-    //             // let _ = ws_index(req, wsc).await;
-    //             Ok(())
-    //         },
-    //     ))
-    //     .get(|_| async { Ok(Body::empty()) });
 
     println!(r#"Server is running..."#);
 

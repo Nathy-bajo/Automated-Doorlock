@@ -7,6 +7,7 @@
 /deploy.sh
 /prisma
 /migrate.sh
+/AuthKey_G9QF725JFS.p8
 
 # testing
 /coverage
@@ -20,7 +21,6 @@
 .env.development.local
 .env.test.local
 .env.production.local
-AuthKey_6DRGKC394S.p8
 
 npm-debug.log*
 yarn-debug.log*
