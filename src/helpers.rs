@@ -3,7 +3,7 @@ use crate::{
         Door, DoorUpdateInput, DoorUpdateInputState, DoorWhereUniqueInput, FindFirstUserArgs,
         FindManyUserArgs, UpdateOneDoorArgs, User, UserWhereInput, UserWhereInputEmail,
     },
-    ButtonPress, Polling,
+    Polling,
 };
 // use chrono::Utc;
 // use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
@@ -36,39 +36,6 @@ pub async fn polling(req: Request<Arc<TideState>>) -> tide::Result {
     Ok(res)
 }
 
-async fn button(mut req: Request<Arc<TideState>>) -> tide::Result {
-    let request = req.body_json::<crate::ButtonPressed>().await?;
-
-    // let button = req.state().button;
-    // let mut button = button.lock().await;
-
-    let button_state = match ButtonPress::from_str(&request.button).map_err(|_e| {
-        tide::http::Error::from_str(StatusCode::NotAcceptable, Error::NoAuthHeaderError)
-    })? {
-        ButtonPress::Pressed => {
-            // button.wait_for_press(None);
-            ButtonPress::Pressed
-        }
-    };
-
-    let message = match button_state {
-        ButtonPress::Pressed => format!(
-            "{:?}Someone is waiting for you at the door! http://192.168.100.6:3000/video",
-            button_state
-        ),
-    };
-
-    // .when_pressed(|_| {
-    //     println!("button pressed");
-    // })
-    // .unwrap();
-
-    notification_handler(req.state().clone(), message).await?;
-
-    Ok(format!("Action executed").into())
-
-    // let mut button = button.lock().await?;
-}
 
 pub async fn toggle_door_state(req: Request<Arc<TideState>>) -> tide::Result {
     // check auth
@@ -111,18 +78,18 @@ pub async fn toggle_door_state(req: Request<Arc<TideState>>) -> tide::Result {
     println!("{}", log);
 
     // put this in state
-    let servo = &req.state().servo;
-    let mut servo = servo.lock().await;
+    // let servo = &req.state().servo;
+    // let mut servo = servo.lock().await;
 
     let door_state = match DoorState::from_str(&door.state).map_err(|_e| {
         tide::http::Error::from_str(StatusCode::NotAcceptable, Error::NoAuthHeaderError)
     })? {
         DoorState::Open => {
-            servo.min();
+            // servo.min();
             DoorState::Close
         }
         DoorState::Close => {
-            servo.max();
+            // servo.max();
             DoorState::Open
         }
     };
@@ -158,7 +125,7 @@ pub async fn toggle_door_state(req: Request<Arc<TideState>>) -> tide::Result {
 use a2::{Client, Endpoint, NotificationBuilder, NotificationOptions, PlainNotificationBuilder};
 use argparse::{ArgumentParser, Store, StoreOption, StoreTrue};
 
-async fn notification_handler(state: Arc<TideState>, message: String) -> tide::Result {
+pub async fn notification_handler(state: Arc<TideState>, message: String) -> tide::Result {
     // pretty_env_logger::init();
 
     let users = state

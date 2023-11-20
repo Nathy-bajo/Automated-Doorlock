@@ -1,20 +1,20 @@
 extern crate mailgun_rs;
+use std::sync::Arc;
 
-use crate::helpers::{polling, toggle_door_state};
-use futures::StreamExt;
+use crate::helpers::{notification_handler, polling, toggle_door_state};
+// use futures::StreamExt;
 use prisma::{
     Door, DoorCreateInput, DoorWhereInput, DoorWhereInputId, FindFirstDoorArgs, FindFirstUserArgs,
     Prisma, User, UserCreateInput, UserWhereInput, UserWhereInputEmail,
 };
 use prisma_client::futures::lock::Mutex;
-use rust_gpiozero::Servo;
-use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+// use rust_gpiozero::{Button, Debounce, Servo};
+// use serde::{Deserialize, Serialize};
+// use std::sync::Arc;
 use tide::security::{CorsMiddleware, Origin};
 use tide::{utils::After, Response, StatusCode};
-use tide::{Body, Request};
-use tide_websockets::{Message, WebSocket, WebSocketConnection};
 use utils::Hasher;
+use serde::{Deserialize, Serialize};
 
 mod auth;
 pub mod controllers;
@@ -94,8 +94,8 @@ pub type Result<T> = std::result::Result<T, error::Error>;
 
 pub struct TideState {
     pub prisma: Prisma,
-    pub servo: Arc<Mutex<Servo>>,
-    // pub button: Arc<Mutex<Button>>,
+    // counter: std::sync::Arc<std::sync::Mutex<u16>>,
+    // pub servo: std::sync::Arc<Mutex<Servo>>,
     pub hasher: Hasher,
 }
 
@@ -126,26 +126,6 @@ impl DoorState {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-pub enum ButtonPress {
-    Pressed,
-}
-
-#[derive(Deserialize, Serialize)]
-pub struct ButtonPressed {
-    pub button: String,
-}
-
-impl ButtonPress {
-    pub fn from_str(button: &str) -> std::result::Result<ButtonPress, ()> {
-        let state = match button.to_lowercase().as_str() {
-            "pushed" => ButtonPress::Pressed,
-            _ => Err(())?,
-        };
-        Ok(state)
-    }
-}
-
 #[derive(Clone, Serialize, Deserialize)]
 pub struct TransactionResponse {
     pub create_user: User,
@@ -158,22 +138,51 @@ pub struct DoorResponse {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+let url = "wss://ws.test.azero.dev";
+
+
+// let api = Api::<sr25519::Pair>::new(url).unwrap();
+
+
     env_logger::init();
     let prisma = Prisma::new(vec![]).await?;
     let hasher = Hasher::new();
-    let state = TideState {
+    let state = Arc::new(TideState {
         prisma,
-        servo: Arc::new(Mutex::new(Servo::new(17))),
+        // servo: std::sync::Arc::new(Mutex::new(Servo::new(17))),
         hasher,
-        // button: Arc::new(Mutex::new(
-        //     Button::new(26).debounce(std::time::Duration::from_millis(100)),
-        // )),
-    };
+    });
 
-    // let button_pressed = state.button.lock().await;
-    // let mut button = button_pressed.wait_for_press(some(3));
-    // create users
+    let message = format!("Someone is waiting for you at the door!");
 
+    // let mut button = Button::new(26).debounce(std::time::Duration::from_millis(100));
+
+    // let (send_but, mut recv_but) = tokio::sync::mpsc::channel(16);
+
+    // button.when_pressed(move|_| {
+    //     println!("Button was pressed!");
+    //     send_but.try_send(()).unwrap();
+    // }).unwrap();
+
+    let state_clone = state.clone();
+
+    // let task = tokio::spawn(async move {
+    //     while let Some(_) = recv_but.recv().await {
+    //         notification_handler(state_clone.clone(), message.clone())
+    //             .await
+    //             .unwrap();
+    //     }
+    // });
+
+    // button.when_released(|_| {
+    //     println!("Pressed was button.");
+    // });
+
+    // button.when_pressed(|_| {
+    //     println!("Push button was pressed!");
+    // });
+
+    // create door
     let door_exist = state
         .prisma
         .first_door::<Door>(FindFirstDoorArgs {
@@ -195,6 +204,7 @@ async fn main() -> Result<()> {
             .await?;
     }
 
+    // create users
     let users_exist = state
         .prisma
         .first_user::<User>(FindFirstUserArgs {
@@ -259,7 +269,7 @@ async fn main() -> Result<()> {
         .allow_origin(Origin::from("*"))
         .allow_credentials(false);
 
-    let mut app = tide::with_state(Arc::new(state));
+    let mut app = tide::with_state(state);
 
     app.with(cors);
 
@@ -273,6 +283,7 @@ async fn main() -> Result<()> {
     }));
 
     app.at("/login").post(login_handler);
+    // app.at("/nft").post(nft_handler);
     app.at("/reset").post(reset_handler);
     app.at("/door").post(toggle_door_state);
     app.at("/forgot").post(forgot_handler);
