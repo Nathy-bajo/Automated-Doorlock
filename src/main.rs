@@ -1,20 +1,18 @@
 extern crate mailgun_rs;
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use crate::helpers::{notification_handler, polling, toggle_door_state};
-// use futures::StreamExt;
 use prisma::{
     Door, DoorCreateInput, DoorWhereInput, DoorWhereInputId, FindFirstDoorArgs, FindFirstUserArgs,
     Prisma, User, UserCreateInput, UserWhereInput, UserWhereInputEmail,
 };
 use prisma_client::futures::lock::Mutex;
-// use rust_gpiozero::{Button, Debounce, Servo};
-// use serde::{Deserialize, Serialize};
-// use std::sync::Arc;
+use rust_gpiozero::{Button, Debounce, Servo};
+use serde::{Deserialize, Serialize};
 use tide::security::{CorsMiddleware, Origin};
 use tide::{utils::After, Response, StatusCode};
 use utils::Hasher;
-use serde::{Deserialize, Serialize};
 
 mod auth;
 pub mod controllers;
@@ -24,13 +22,6 @@ mod prisma;
 mod utils;
 use controllers::*;
 
-#[derive(Deserialize, Serialize)]
-pub struct ClaimsToken {
-    pub kid: String,
-    pub iss: String,
-    pub iat: u64,
-}
-
 #[derive(serde::Deserialize)]
 pub struct DataLoss {
     pub email: String,
@@ -39,17 +30,13 @@ pub struct DataLoss {
 #[derive(Deserialize, Serialize)]
 pub struct Polling {
     pub door: String,
+    pub ringing: bool,
 }
 
 #[derive(Deserialize, Serialize)]
 pub struct ResetPassword {
     pub email: String,
     pub reset_password: String,
-}
-
-#[derive(Deserialize, Serialize)]
-pub struct Name {
-    pub name: String,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -65,11 +52,6 @@ pub struct LoginRequest {
     pub pw: String,
 }
 
-#[derive(Deserialize, Serialize)]
-pub struct AdminRequest {
-    pub action: String,
-}
-
 #[derive(Serialize, Deserialize)]
 pub struct LoginResponse {
     pub token: String,
@@ -80,22 +62,12 @@ pub struct AppleNotifications {
     pub device_token: String,
 }
 
-#[derive(Serialize, Deserialize)]
-pub struct NotificationMessage {
-    pub aps: Alert,
-}
-
-#[derive(Serialize, Deserialize)]
-pub struct Alert {
-    pub alert: String,
-}
-
 pub type Result<T> = std::result::Result<T, error::Error>;
 
 pub struct TideState {
     pub prisma: Prisma,
-    // counter: std::sync::Arc<std::sync::Mutex<u16>>,
-    // pub servo: std::sync::Arc<Mutex<Servo>>,
+    pub servo: Arc<Mutex<Servo>>,
+    pub ringing: AtomicBool,
     pub hasher: Hasher,
 }
 
@@ -138,51 +110,43 @@ pub struct DoorResponse {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-let url = "wss://ws.test.azero.dev";
-
-
-// let api = Api::<sr25519::Pair>::new(url).unwrap();
-
-
     env_logger::init();
     let prisma = Prisma::new(vec![]).await?;
     let hasher = Hasher::new();
     let state = Arc::new(TideState {
         prisma,
-        // servo: std::sync::Arc::new(Mutex::new(Servo::new(17))),
+        servo: Arc::new(Mutex::new(Servo::new(17))),
+        ringing: AtomicBool::new(false),
         hasher,
     });
 
-    let message = format!("Someone is waiting for you at the door!");
+    let mut button = Button::new(26).debounce(std::time::Duration::from_millis(100));
 
-    // let mut button = Button::new(26).debounce(std::time::Duration::from_millis(100));
-
-    // let (send_but, mut recv_but) = tokio::sync::mpsc::channel(16);
-
-    // button.when_pressed(move|_| {
-    //     println!("Button was pressed!");
-    //     send_but.try_send(()).unwrap();
-    // }).unwrap();
+    let (send_but, mut recv_but) = tokio::sync::mpsc::channel::<()>(16);
 
     let state_clone = state.clone();
+    button
+        .when_pressed(move |_| {
+            println!("Doorbell pressed!");
+            state_clone
+                .ringing
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+            if let Err(e) = send_but.try_send(()) {
+                println!("Doorbell channel send failed: {}", e);
+            }
+        })
+        .unwrap();
 
-    // let task = tokio::spawn(async move {
-    //     while let Some(_) = recv_but.recv().await {
-    //         notification_handler(state_clone.clone(), message.clone())
-    //             .await
-    //             .unwrap();
-    //     }
-    // });
+    let notify_state = state.clone();
+    tokio::spawn(async move {
+        let message = "Someone is waiting for you at the door!".to_string();
+        while recv_but.recv().await.is_some() {
+            if let Err(e) = notification_handler(notify_state.clone(), message.clone()).await {
+                println!("APNs notification failed: {}", e);
+            }
+        }
+    });
 
-    // button.when_released(|_| {
-    //     println!("Pressed was button.");
-    // });
-
-    // button.when_pressed(|_| {
-    //     println!("Push button was pressed!");
-    // });
-
-    // create door
     let door_exist = state
         .prisma
         .first_door::<Door>(FindFirstDoorArgs {
@@ -204,7 +168,6 @@ let url = "wss://ws.test.azero.dev";
             .await?;
     }
 
-    // create users
     let users_exist = state
         .prisma
         .first_user::<User>(FindFirstUserArgs {
@@ -283,7 +246,6 @@ let url = "wss://ws.test.azero.dev";
     }));
 
     app.at("/login").post(login_handler);
-    // app.at("/nft").post(nft_handler);
     app.at("/reset").post(reset_handler);
     app.at("/door").post(toggle_door_state);
     app.at("/forgot").post(forgot_handler);

@@ -37,8 +37,7 @@ pub async fn applenotification_handler(mut req: Request<Arc<TideState>>) -> tide
         tide::http::Error::from_str(StatusCode::BadRequest, Error::JWTTokenError.to_string())
     })?;
 
-    let test_token = req
-        .state()
+    req.state()
         .prisma
         .update_user::<User>(UpdateOneUserArgs {
             data: UserUpdateInput {
@@ -54,16 +53,14 @@ pub async fn applenotification_handler(mut req: Request<Arc<TideState>>) -> tide
         })
         .await
         .map_err(|e| TideError::from_str(400, format!("Invalid Token: {}", e)))?;
-    println!("apple token? {:?}", test_token);
-    println!("well");
 
-    Ok(format!("Tester ",).into())
+    Ok("Device token registered".into())
 }
 
 pub async fn login_handler(mut req: Request<Arc<TideState>>) -> tide::Result {
     let login_request = req.body_json::<LoginRequest>().await?;
 
-    let password = login_request.pw; // bcrypt
+    let password = login_request.pw;
     let user = req
         .state()
         .prisma
@@ -76,8 +73,8 @@ pub async fn login_handler(mut req: Request<Arc<TideState>>) -> tide::Result {
         })
         .await
         .map_err(|_e| TideError::from_str(StatusCode::NotFound, "User not found"))?
-        .ok_or_else(|| Error::JWTTokenError)?; //tide error
-    println!("{}", user.password);
+        .ok_or_else(|| Error::JWTTokenError)?;
+
     let matches = req
         .state()
         .hasher
@@ -96,9 +93,7 @@ pub async fn login_handler(mut req: Request<Arc<TideState>>) -> tide::Result {
         &Role::from_str(&user.role),
         user.email,
     )
-    .map_err(|e| tide::http::Error::from(e))?;
-
-    println!("token: {}", token);
+    .map_err(tide::http::Error::from)?;
 
     let mut res = tide::Response::new(StatusCode::Accepted);
     res.set_body(Body::from_json(&LoginResponse { token }).unwrap());
@@ -108,15 +103,7 @@ pub async fn login_handler(mut req: Request<Arc<TideState>>) -> tide::Result {
 
 pub async fn reset_handler(mut req: Request<Arc<TideState>>) -> tide::Result {
     let change_password = req.body_json::<FormData>().await?;
-    println!("crazy");
-    // check token validity
 
-    // let token = req
-    //     .header("Authorization")
-    //     .map(|token| token.as_str().to_string());
-    // let email = decode_token(token)?;
-
-    // fetch user with id from token
     let user = req
         .state()
         .prisma
@@ -129,15 +116,13 @@ pub async fn reset_handler(mut req: Request<Arc<TideState>>) -> tide::Result {
         })
         .await
         .map_err(|_e| TideError::from_str(StatusCode::NotFound, "User not found"))?
-        .ok_or_else(|| Error::JWTTokenError)?; //tide error
-    println!("Works");
-    // hash the old password in FormData, compare with the user password from db
+        .ok_or_else(|| Error::JWTTokenError)?;
+
     let matches = req
         .state()
         .hasher
         .verify(&change_password.current_password, &user.password)
         .map_err(|e| TideError::from_str(300, format!("Failed to verify password: {}", e)))?;
-    println!("Still works");
 
     if !matches {
         return Err(TideError::from_str(
@@ -146,8 +131,6 @@ pub async fn reset_handler(mut req: Request<Arc<TideState>>) -> tide::Result {
         ));
     }
 
-    // take the hash of new password and update user in db
-    println!("still working");
     req.state()
         .prisma
         .update_user::<User>(UpdateOneUserArgs {
@@ -169,20 +152,12 @@ pub async fn reset_handler(mut req: Request<Arc<TideState>>) -> tide::Result {
         })
         .await
         .map_err(|e| TideError::from_str(400, format!("Password invalid: {}", e)))?;
-    println!("well");
 
-    Ok(format!("Hello User ",).into())
+    Ok("Password updated".into())
 }
 
 pub async fn email_handler(mut req: Request<Arc<TideState>>) -> tide::Result {
     let update_password = req.body_json::<ResetPassword>().await?;
-    println!("Sasageyo!");
-
-    // let token = req
-    //     .header("Authorization")
-    //     .map(|token| token.as_str().to_string());
-
-    // let emails = decode_token(token)?;
 
     let user = req
         .state()
@@ -196,8 +171,7 @@ pub async fn email_handler(mut req: Request<Arc<TideState>>) -> tide::Result {
         })
         .await
         .map_err(|_e| TideError::from_str(StatusCode::NotFound, "User not found"))?
-        .ok_or_else(|| Error::JWTTokenError)?; //tide error
-    println!("Sassyy");
+        .ok_or_else(|| Error::JWTTokenError)?;
 
     req.state()
         .prisma
@@ -220,15 +194,12 @@ pub async fn email_handler(mut req: Request<Arc<TideState>>) -> tide::Result {
         })
         .await
         .map_err(|e| TideError::from_str(400, format!("Password invalid: {}", e)))?;
-    println!("Partss");
 
-    Ok(format!("Hello User ",).into())
+    Ok("Password reset".into())
 }
 
-pub fn decode_token(token: Option<String>) -> std::result::Result<String, tide::http::Error> { 
+pub fn decode_token(token: Option<String>) -> std::result::Result<String, tide::http::Error> {
     let token = token.map(|token| token.split("Bearer: ").collect::<Vec<_>>()[1].to_string());
-
-    println!("Common");
 
     match token {
         Some(jwt) => {
@@ -237,15 +208,15 @@ pub fn decode_token(token: Option<String>) -> std::result::Result<String, tide::
                 &DecodingKey::from_secret(JWT_SECRET),
                 &Validation::new(Algorithm::HS512),
             )
-            .map_err(|_e| {
-                println!("Token Decode Error {:?}", _e);
+            .map_err(|e| {
+                println!("Token decode error: {:?}", e);
                 tide::http::Error::from_str(StatusCode::BadRequest, Error::JWTTokenError)
             })?;
             if decoded.claims.role != Role::Admin {
                 Err(tide::http::Error::from_str(
                     StatusCode::BadRequest,
                     Error::NoPermissionError,
-                ))?
+                ))
             } else {
                 Ok(decoded.claims.email)
             }
@@ -253,10 +224,8 @@ pub fn decode_token(token: Option<String>) -> std::result::Result<String, tide::
         None => Err(tide::http::Error::from_str(
             StatusCode::BadRequest,
             "Server error",
-        ))?,
+        )),
     }
-
-    // println!("GAs");
 }
 
 pub async fn forgot_handler(mut req: Request<Arc<TideState>>) -> tide::Result {
@@ -274,29 +243,28 @@ pub async fn forgot_handler(mut req: Request<Arc<TideState>>) -> tide::Result {
         .await
         .ok()
         .flatten()
-        .ok_or(TideError::from_str(StatusCode::NotFound, "User not found"))?; //tide error
-    println!("Workss");
+        .ok_or_else(|| TideError::from_str(StatusCode::NotFound, "User not found"))?;
 
     let token = create_jwt(
         user.id as usize,
         &Role::from_str(&user.role.clone()),
         user.email.clone(),
     )
-    .map_err(|e| tide::http::Error::from(e))?;
-    println!("This is my token={}", token);
+    .map_err(tide::http::Error::from)?;
 
     let domain = "sandbox3234fec2e6144717bf98ddfca5eb0b81.mailgun.org";
     let key = "02c914953aae6aef71afd139f07d4a06-02fa25a3-25b8c2b9";
-    let recipient = user.email;
-    let recipient = EmailAddress::address(&recipient);
+    let recipient = EmailAddress::address(&user.email);
     let message = Message {
         to: vec![recipient],
         subject: String::from("Change your password here"),
         text: String::from("Are you ready to change your password"),
-        html: format!("<p><a href=\"http://192.168.100.204:3000/email?token={}\">click to reset password</a></p>", token),
+        html: format!(
+            "<p><a href=\"http://192.168.100.204:3000/email?token={}\">click to reset password</a></p>",
+            token
+        ),
         ..Default::default()
     };
-    println!("yupp still workss");
 
     let client = Mailgun {
         api_key: String::from(key),
@@ -308,20 +276,11 @@ pub async fn forgot_handler(mut req: Request<Arc<TideState>>) -> tide::Result {
         "postmaster@sandbox3234fec2e6144717bf98ddfca5eb0b81.mailgun.org",
     );
 
-    match client.send(&sender) {
-        Ok(_) => {
-            println!("successful");
-        }
-        Err(err) => {
-            println!("{}", err);
-        }
+    if let Err(err) = client.send(&sender) {
+        println!("Mailgun send error: {}", err);
     }
-
-    println!("Hehehe");
 
     let mut res = tide::Response::new(StatusCode::Accepted);
     res.set_body(Body::from_json(&LoginResponse { token }).unwrap());
     Ok(res)
-
-    // Ok(format!("Hello User ",).into())
 }
